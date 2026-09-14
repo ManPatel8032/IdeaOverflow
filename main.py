@@ -34,7 +34,7 @@ app.add_middleware(
 
 # ── Serve the vanilla HTML/CSS/JS frontend ──
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend-html")
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 # Mount static assets (CSS, JS) under /css and /js paths
 app.mount("/css", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css")), name="css")

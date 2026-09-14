@@ -2,7 +2,8 @@
    API Client — all FastAPI backend endpoints
    ═══════════════════════════════════════════ */
 
-const API_BASE = window.location.origin;
+// Configurable backend URL for separate frontend/backend deployment
+const API_BASE = window.__API_BASE__ || localStorage.getItem('io_api_base') || window.location.origin;
 
 const API = {
     /** GET /manuscript — load paper.json from backend */
