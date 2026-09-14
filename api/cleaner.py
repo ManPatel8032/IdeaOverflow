@@ -179,21 +179,30 @@ def _normalize_headings(text: str) -> str:
     """
     known_headings = [
         "abstract",
+        "significance",
+        "keywords",
+        "index terms",
         "introduction",
         "related work",
         "literature review",
         "background",
+        "materials and methods",
+        "materials",
+        "preliminaries",
         "methodology",
         "methods",
         "method",
         "proposed method",
         "proposed approach",
         "approach",
+        "system architecture",
+        "implementation",
         "experiments",
         "experimental setup",
         "experimental results",
         "results",
         "results and discussion",
+        "discussion and results",
         "discussion",
         "conclusion",
         "conclusions",
@@ -205,6 +214,7 @@ def _normalize_headings(text: str) -> str:
         "references",
         "bibliography",
         "appendix",
+        "appendices",
     ]
 
     lines = text.split("\n")
@@ -214,6 +224,22 @@ def _normalize_headings(text: str) -> str:
         stripped = line.strip()
         if not stripped:
             normalised.append(line)
+            continue
+
+        # Check for inline headings: "Abstract—Attachment...", "Abstract: ...", "Keywords: ..."
+        inline_m = re.match(
+            r"^(?:(?:section\s+)?\d+[\.\)]\s*|[IVXLC]+[\.\)]\s*)?("
+            + "|".join(re.escape(h) for h in known_headings)
+            + r")\s*[:.—–\-]\s*(.+)$",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if inline_m:
+            h_text = inline_m.group(1).title()
+            rest = inline_m.group(2).strip()
+            normalised.append(h_text)
+            if rest:
+                normalised.append(rest)
             continue
 
         # Remove leading numbering: "1.", "1)", "I.", "II.", "Section 1:", etc.

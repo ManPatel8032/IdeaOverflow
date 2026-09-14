@@ -12,6 +12,20 @@ const API = {
         return res.json();
     },
 
+    /** PUT /manuscript — save paper.json back to server */
+    async saveManuscript(data) {
+        const res = await fetch(`${API_BASE}/manuscript`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to save manuscript');
+        }
+        return res.json();
+    },
+
     /** GET /manuscript/schema — load paper-schema.json */
     async getSchema() {
         const res = await fetch(`${API_BASE}/manuscript/schema`);

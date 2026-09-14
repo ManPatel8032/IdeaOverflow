@@ -8,6 +8,7 @@ window.Pages = window.Pages || {};
 window.Pages.converter = function (container) {
   // ── Supported conferences (must match backend templates) ──
   const CONFERENCES = [
+    { id: 'base',     name: 'Base',     icon: '🧩', desc: 'Matches project single/double column samples' },
     { id: 'ieee',     name: 'IEEE',     icon: '📊', desc: 'Two-column, numbered citations' },
     { id: 'acm',      name: 'ACM',      icon: '🏛️', desc: 'Single-column, balanced layout' },
     { id: 'neurips',  name: 'NeurIPS',  icon: '🧠', desc: 'ML conference, wide margins' },
@@ -21,7 +22,7 @@ window.Pages.converter = function (container) {
   ];
 
   // ── Local state ──
-  let selectedConf = 'ieee';
+  let selectedConf = 'base';
   let selectedLayout = 'single-column';
   let uploadedFile = null;
   let pipelineStatus = 'idle';       // idle | uploading | processing | done | error
@@ -394,7 +395,7 @@ window.Pages.converter = function (container) {
     if (!pdfBlob) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(pdfBlob);
-    a.download = 'paper_formatted.pdf';
+    a.download = selectedLayout === 'double-column' ? 'double-column.pdf' : 'single-column.pdf';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

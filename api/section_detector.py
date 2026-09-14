@@ -30,6 +30,7 @@ from typing import Optional
 # Ordered roughly by typical appearance in a paper
 KNOWN_SECTIONS = [
     "abstract",
+    "significance",
     "keywords",
     "index terms",
     "introduction",
@@ -128,7 +129,26 @@ def detect_sections(clean_text: str) -> dict:
             "error": "No text provided for section detection.",
         }
 
-    lines = clean_text.strip().split("\n")
+    # Pre-process: split lines that have inline headings (e.g. Abstract—..., Significance: ...)
+    processed_lines = []
+    for line in clean_text.strip().split("\n"):
+        stripped = line.strip()
+        inline_m = re.match(
+            r"^\s*(?:(?:section\s+)?\d+[\.\)]\s*|[IVXLC]+[\.\)]\s*)?("
+            + "|".join(re.escape(s) for s in KNOWN_SECTIONS)
+            + r")\s*[:.—–\-]\s*(.+)$",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if inline_m:
+            processed_lines.append(inline_m.group(1).title())
+            rest = inline_m.group(2).strip()
+            if rest:
+                processed_lines.append(rest)
+        else:
+            processed_lines.append(line)
+
+    lines = processed_lines
 
     # ── Step 1: Find all heading positions ──────────────────────────
     heading_positions = _find_headings(lines)
@@ -150,14 +170,29 @@ def detect_sections(clean_text: str) -> dict:
 
     for sec in raw_sections:
         heading_lower = sec["heading"].lower()
-        if heading_lower == "abstract":
+        if heading_lower in ("abstract", "significance"):
             abstract = sec["content"]
-        elif heading_lower == "keywords":
+        elif heading_lower in ("keywords", "index terms"):
             keywords = _parse_keywords(sec["content"])
         elif heading_lower in ("references", "bibliography"):
             references = sec["content"]
         else:
             body_sections.append(sec)
+
+    # Fallback: If abstract is still empty, check for pre-section text or first section
+    if not abstract and heading_positions:
+        first_h_idx = heading_positions[0][0]
+        pre_lines = []
+        for i in range(first_h_idx):
+            s = lines[i].strip()
+            if len(s) > 50 and s not in title and not any(s in a for a in authors):
+                pre_lines.append(s)
+        if pre_lines:
+            abstract = "\n\n".join(pre_lines)
+    elif not abstract and body_sections:
+        if body_sections[0]["heading"].lower() in ("abstract", "significance", "summary"):
+            abstract = body_sections[0]["content"]
+            body_sections = body_sections[1:]
 
     # ── Step 6: Nest subsections under parent sections ──────────────
     nested_sections = _nest_sections(body_sections)
@@ -194,6 +229,9 @@ def _find_headings(lines: list[str]) -> list[tuple[int, str, int]]:
     """
     headings = []
     seen_explicit_heading = False
+    seen_references = False  # stop fallback headings after References
+    known_lc = {s.lower() for s in KNOWN_SECTIONS}
+
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
@@ -202,14 +240,24 @@ def _find_headings(lines: list[str]) -> list[tuple[int, str, int]]:
         m = _HEADING_RE.match(stripped)
         if m:
             heading_text = m.group(1).strip().title()
-            headings.append((i, heading_text, _extract_numeric_level(stripped)))
+            level = _extract_numeric_level(stripped)
+            headings.append((i, heading_text, level))
             seen_explicit_heading = True
+            if heading_text.lower() in ("references", "bibliography"):
+                seen_references = True
             continue
 
         # Heuristic fallback: short ALL-CAPS line that matches known headings
-        if stripped.isupper() and stripped.lower().rstrip(":.") in [s.lower() for s in KNOWN_SECTIONS]:
-            headings.append((i, stripped.title(), 1))
+        if stripped.isupper() and stripped.lower().rstrip(":.") in known_lc:
+            heading_text = stripped.title()
+            headings.append((i, heading_text, 1))
             seen_explicit_heading = True
+            if heading_text.lower() in ("references", "bibliography"):
+                seen_references = True
+            continue
+
+        # After the References heading, only accept known section headings
+        if seen_references:
             continue
 
         # Numbered heading with level detection: "1 Intro" (level 1), "1.2 Foo" (level 2)
@@ -235,7 +283,7 @@ def _find_headings(lines: list[str]) -> list[tuple[int, str, int]]:
         if md_match:
             heading_candidate = md_match.group(1).strip()
             level = len(md_match.group(0)) - len(md_match.group(0).lstrip("#"))
-            if heading_candidate.lower() in [s.lower() for s in KNOWN_SECTIONS]:
+            if heading_candidate.lower() in known_lc:
                 headings.append((i, heading_candidate.title(), min(level, 3)))
                 seen_explicit_heading = True
                 continue
@@ -243,8 +291,18 @@ def _find_headings(lines: list[str]) -> list[tuple[int, str, int]]:
             seen_explicit_heading = True
 
         # Last-resort heuristic for short heading-like lines.
+        # Default to level 2 (subsection) — known sections already matched above at level 1.
         if seen_explicit_heading and _looks_like_title_case_heading(stripped):
-            headings.append((i, stripped.rstrip(":."), 1))
+            next_is_lower = (i + 1 < len(lines)) and bool(lines[i + 1].strip()) and lines[i + 1].strip()[0].islower()
+            prev_blank = (i == 0) or not lines[i - 1].strip()
+            next_blank = (i + 1 >= len(lines)) or not lines[i + 1].strip()
+            if not next_is_lower and (prev_blank or next_blank):
+                headings.append((i, stripped.rstrip(":."), 2))
+
+    # Post-process: if ALL headings are level >= 2 (no level-1 anchors),
+    # promote them all to level 1 so the document has top-level sections.
+    if headings and all(h[2] >= 2 for h in headings):
+        headings = [(idx, name, 1) for idx, name, _ in headings]
 
     return headings
 
@@ -260,7 +318,15 @@ def _looks_like_title_case_heading(line: str) -> bool:
         return False
 
     # Prevent paragraph sentences from being classified as headings.
-    if candidate.endswith((".", "?", "!", ";")):
+    if candidate.endswith((".", "?", "!", ";", ":")):
+        return False
+
+    # Prevent continuation lines ending with hyphens, prepositions, or conjunctions
+    if candidate.endswith(("-", "—", "–", ",", "and", "or", "the", "in", "of", "to", "for", "with", "a", "an", "into")):
+        return False
+
+    # Prevent equations or code-like lines
+    if any(ch in candidate for ch in ("=", "<", ">", "\\", "{", "}", "$")):
         return False
 
     words = candidate.split()
@@ -300,6 +366,15 @@ def _looks_like_title_case_heading(line: str) -> bool:
     # Exclude obvious non-headings.
     lowered = candidate.lower()
     if lowered.startswith(("fig", "table", "copyright", "doi", "www.")):
+        return False
+
+    # Reject citation-like lines (author lists with years).
+    if re.search(r"\(\d{4}\)", candidate):  # "(2003)", "(1997)"
+        return False
+    if re.search(r"\bet\s+al\.?", lowered):
+        return False
+    # Lines with many commas between short name-like tokens are citations.
+    if candidate.count(",") >= 2 and re.search(r"\(\d{4}", candidate):
         return False
 
     return True
@@ -362,11 +437,31 @@ def _extract_authors(lines: list[str], headings: list[tuple]) -> list[str]:
             parts = re.split(r"[,;]\s*|\s+and\s+", stripped)
             for part in parts:
                 part = part.strip()
-                if part and len(part) > 2 and not part.lower().startswith(("university", "dept", "department", "institute", "school", "college", "faculty")):
-                    # Basic name check: has at least 2 words, each capitalized
-                    words = part.split()
-                    if 1 <= len(words) <= 5 and all(w[0].isupper() or w in ("de", "van", "von", "di", "el", "al") for w in words if w):
-                        authors.append(part)
+                if not part or len(part) < 3:
+                    continue
+                # Reject affiliations, locations, single words, initials-only
+                affiliation_kw = (
+                    "university", "dept", "department", "institute", "institution",
+                    "school", "college", "faculty", "laboratory", "lab", "hospital",
+                    "center", "centre", "corporation", "inc", "ltd", "foundation",
+                    "campus", "polytechnic", "significance", "email", "@"
+                )
+                if any(kw in part.lower() for kw in affiliation_kw):
+                    continue
+                # Reject single-word entries and pure initials like "S.A.", "M.S.I."
+                words = part.split()
+                if len(words) < 2:
+                    continue
+                # Reject if all words are initials (e.g. "S.A.", "R.S.")
+                if all(re.fullmatch(r"[A-Z]\.?", w) or re.fullmatch(r"[A-Z]\.[A-Z]\.?", w) or re.fullmatch(r"([A-Z]\.){1,4}", w) for w in words):
+                    continue
+                # Must have at least 2 capitalized name-like words
+                linker = {"de", "van", "von", "di", "el", "al", "la", "le", "du", "dos", "das", "bin"}
+                name_words = [w for w in words if w.lower() not in linker]
+                if not name_words:
+                    continue
+                if all(w[0].isupper() for w in name_words if w):
+                    authors.append(part)
 
     return authors
 

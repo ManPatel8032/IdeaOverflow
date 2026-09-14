@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Parser Tree Test</title>
+  <style>
+    body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 2rem; }
+    h2 { color: #00d4ff; }
+    pre { background: #16213e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; border: 1px solid #333; }
+    .pass { color: #00ff88; }
+    .fail { color: #ff4444; }
+    hr { border-color: #333; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Parser Tree Builder — Test Page</h1>
+  <div id="output"></div>
+
+  <!-- Load parser -->
+  <script src="js/parser.js"></script>
+  <script>
+    const out = document.getElementById('output');
+    function log(html) { out.innerHTML += html; }
+    function heading(t) { log(`<h2>${t}</h2>`); }
+    function pre(t) { log(`<pre>${t}</pre>`); }
+    function check(label, ok) {
+      log(`<p class="${ok ? 'pass' : 'fail'}">${ok ? '✅' : '❌'} ${label}</p>`);
+    }
+
+    // ─── Test 1: Nested AST format (typst/paper.json style) ───
+    heading('Test 1: Nested AST format');
+    const nestedJson = {
+      title: "A Novel Approach to JSON-driven Typst Typesetting",
+      authors: [
+        { name: "Alice Doe", affiliation: "University of Typst" },
+        { name: "Bob Smith", affiliation: "Institute of Automation" }
+      ],
+      content: [
+        {
+          type: "section",
+          title: "Introduction",
+          content: [
+            { type: "paragraph", text: "This is a demo of rendering Typst syntax from JSON." },
+            {
+              type: "subsection",
+              title: "Mathematical Formulation",
+              content: [
+                { type: "paragraph", text: "We define our core principle:" },
+                { type: "equation", math: "sum_(i=1)^n i = (n(n+1)) / 2" }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const paper1 = Parser.buildPaperTree(nestedJson);
+    pre(JSON.stringify(paper1, null, 2));
+
+    check('Paper has title', paper1.title === "A Novel Approach to JSON-driven Typst Typesetting");
+    check('Paper has 2 authors', paper1.authors.length === 2);
+    check('Paper.content has 1 section', paper1.content.length === 1);
+    check('Section type is "section"', paper1.content[0].type === 'section');
+    check('Section title is "Introduction"', paper1.content[0].title === 'Introduction');
+    check('Section has 2 children', paper1.content[0].content.length === 2);
+    check('First child is paragraph', paper1.content[0].content[0].type === 'paragraph');
+    check('Second child is subsection', paper1.content[0].content[1].type === 'subsection');
+    check('Subsection title is "Mathematical Formulation"', paper1.content[0].content[1].title === 'Mathematical Formulation');
+    check('Subsection has 2 children', paper1.content[0].content[1].content.length === 2);
+    check('Subsection child 1 is paragraph', paper1.content[0].content[1].content[0].type === 'paragraph');
+    check('Subsection child 2 is equation', paper1.content[0].content[1].content[1].type === 'equation');
+    check('Equation has math field', paper1.content[0].content[1].content[1].math === 'sum_(i=1)^n i = (n(n+1)) / 2');
+
+    log('<hr>');
+    heading('Tree Visualization');
+    const treeStr = Parser.printTree(paper1);
+    pre(treeStr);
+
+    // ─── Test 2: Flat schema format (outputs/paper.json style) ───
+    log('<hr>');
+    heading('Test 2: Flat schema format (heading + content string)');
+    const flatJson = {
+      title: "Test Paper",
+      abstract: "This is a test abstract.",
+      authors: [{ name: "John Doe", organization: "MIT", email: "john@mit.edu" }],
+      sections: [
+        { heading: "Introduction", content: "This is the intro." },
+        { heading: "Methodology", content: "We propose a CNN." }
+      ]
+    };
+
+    const paper2 = Parser.buildPaperTree(flatJson);
+    pre(JSON.stringify(paper2, null, 2));
+
+    check('Paper has title', paper2.title === 'Test Paper');
+    check('Paper.content has 2 sections', paper2.content.length === 2);
+    check('Section 1 type is section', paper2.content[0].type === 'section');
+    check('Section 1 title is "Introduction"', paper2.content[0].title === 'Introduction');
+    check('Section 1 content[0] is paragraph', paper2.content[0].content[0].type === 'paragraph');
+    check('Paragraph text matches', paper2.content[0].content[0].text === 'This is the intro.');
+
+    log('<hr>');
+    heading('Tree Visualization (flat schema)');
+    pre(Parser.printTree(paper2));
+
+    // ─── Test 3: Hierarchy rule enforcement ───
+    log('<hr>');
+    heading('Test 3: Hierarchy rules');
+    check('Paper.content → sections only', paper1.content.every(n => n.type === 'section'));
+    const sec = paper1.content[0];
+    check('Section.content → paragraphs/subsections/equations', sec.content.every(n => ['paragraph','subsection','equation'].includes(n.type)));
+    const sub = sec.content[1];
+    check('Subsection.content → paragraphs/equations', sub.content.every(n => ['paragraph','equation'].includes(n.type)));
+    check('Objects connected via .content arrays', Array.isArray(sec.content) && Array.isArray(sub.content));
+  </script>
+</body>
+</html>

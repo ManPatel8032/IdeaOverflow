@@ -1,276 +1,202 @@
 
----
 
-# Complete Workflow for Agent
+# Instructions for the Agent
 
-## 1. Input Document Processing
+The system receives a **paper JSON file** that follows the provided `paper-schema.json`.
+This JSON represents the paper as a **nested document structure (AST)**.
 
-The system receives a research paper file.
+The goal is to **convert this JSON into JavaScript objects and maintain the hierarchy between sections, subsections, paragraphs, and equations**.
 
-Supported formats:
-
-```
-PDF
-DOCX
-TXT
-MD
-```
-
-Processing flow:
-
-```
-Upload File
-↓
-Text Extraction
-↓
-Text Cleaning
-↓
-Section Detection
-↓
-AST Creation
-```
-
-The AST should look like:
-
-```json
-{
-  "title": "...",
-  "abstract": "...",
-  "keywords": [],
-  "authors": [],
-  "sections": []
-}
-```
+We will represent the document as a **tree of objects**.
 
 ---
 
-# 2. Convert AST to Schema JSON
+# 1. Paper Object (Root)
 
-Transform the AST into the **final JSON structure required by the Typst template**.
+The paper object is the root of the structure.
 
-Mapping:
+It contains:
 
-```
-AST.title → title
-AST.abstract → abstract
-AST.keywords → index_terms
-AST.authors → authors
-AST.sections → sections
-```
+* title
+* authors
+* abstract
+* content
 
-Expected JSON format:
-
-```json
-{
-  "title": "...",
-  "abstract": "...",
-  "index_terms": [],
-  "authors": [],
-  "sections": [
-    {
-      "heading": "Introduction",
-      "content": "..."
-    }
-  ]
-}
-```
-
----
-
-# 3. Save Output JSON
-
-After generating the structured JSON:
-
-Save the result to a file:
-
-```
-response.json
-```
-
-Implementation logic:
-
-```
-Generate JSON
-↓
-Validate schema
-↓
-Save response.json
-```
-
-Example code logic:
-
-```
-open("response.json", "w")
-write(json_data)
-```
-
-This file will be used later for generating the PDF.
-
----
-
-# 4. Project Folder Structure
-
-The system should follow this structure:
-
-```
-project/
-│
-├── parser.py
-├── ai_cleaner.py
-├── ast_compiler.py
-├── app.py
-│
-├── response.json
-│
-├── typst/
-│   │
-│   ├── single-column.typ
-│   ├── double-column.typ
-│   │
-│   └── templates/
-│        ├── ieee.typ
-│        ├── acm.typ
-│        ├── springer.typ
-│        └── elsevier.typ
-```
-
-Explanation:
-
-| File              | Purpose                                        |
-| ----------------- | ---------------------------------------------- |
-| single-column.typ | Base template for single column papers         |
-| double-column.typ | Base template for two-column conference papers |
-| templates folder  | Conference-specific formatting                 |
-
----
-
-# 5. Convert JSON to Typst Content
-
-Load the generated JSON:
-
-```
-response.json
-```
-
-Then insert its data into the Typst template.
-
-Example logic:
-
-```
-title → document title
-abstract → abstract block
-authors → author block
-sections → section headings and content
-```
-
-Example Typst generation:
-
-```
-= Introduction
-content...
-
-= Methodology
-content...
-```
-
----
-
-# 6. Select Layout Template
-
-The system should choose the layout based on the conference.
-
-```
-Conference Template
-↓
-Select base layout
-```
+The `content` array will contain all **top-level sections**.
 
 Example:
 
-| Conference | Layout            |
-| ---------- | ----------------- |
-| IEEE       | double-column.typ |
-| ACM        | double-column.typ |
-| Springer   | single-column.typ |
-
----
-
-# 7. Generate Typst File
-
-Using the selected template, generate a Typst file:
-
-```
-paper.typ
-```
-
-This file contains:
-
-```
-template import
-title
-authors
-abstract
-sections
-references
+```javascript
+paper = {
+  title: "...",
+  authors: [],
+  abstract: "...",
+  content: []
+}
 ```
 
 ---
 
-# 8. Compile Typst to PDF
+# 2. Section Object
 
-Run the Typst compiler:
+A section represents a main heading such as **Introduction, Methodology, Results, Conclusion**.
 
+Each section must contain:
+
+* `type: "section"`
+* `title`
+* `content` (array)
+
+Example:
+
+```javascript
+section = {
+  type: "section",
+  title: "Introduction",
+  content: []
+}
 ```
-typst compile paper.typ output.pdf
-```
 
-Output:
+The `content` array will contain:
 
-```
-output.pdf
-```
-
-This PDF should follow the **journal/conference layout**.
+* paragraphs
+* subsections
+* equations
 
 ---
 
-# 9. Final Pipeline
+# 3. Subsection Object
 
+A subsection is nested inside a section.
+
+Structure:
+
+```javascript
+subsection = {
+  type: "subsection",
+  title: "Mathematical Rendering",
+  content: []
+}
 ```
-Upload Document
-↓
-Text Extraction
-↓
-Text Cleaning
-↓
-Section Detection
-↓
-AST Creation
-↓
-Convert AST → JSON Schema
-↓
-Save response.json
-↓
-Load Typst Template
-↓
-Generate paper.typ
-↓
-Compile Typst
-↓
-Final Conference-style PDF
+
+The subsection `content` array may contain:
+
+* paragraphs
+* equations
+
+---
+
+# 4. Paragraph Object
+
+Paragraphs are **text blocks** inside sections or subsections.
+
+Structure:
+
+```javascript
+paragraph = {
+  type: "paragraph",
+  text: "OCR systems are widely used..."
+}
+```
+
+Paragraphs are added to the `content` array of a section or subsection.
+
+---
+
+# 5. Equation Object
+
+Equations represent mathematical expressions.
+
+Structure:
+
+```javascript
+equation = {
+  type: "equation",
+  math: "L(theta) = ..."
+}
+```
+
+Equations can appear inside:
+
+* sections
+* subsections
+
+---
+
+# 6. Building the Hierarchy
+
+Objects are connected using the `content` array.
+
+Example workflow:
+
+1. Create a section.
+2. Create paragraphs.
+3. Push paragraphs into the section.
+4. Create a subsection.
+5. Push paragraphs/equations into the subsection.
+6. Push the subsection into the section.
+7. Push the section into the paper.
+
+Example logic:
+
+```javascript
+section.content.push(paragraph1)
+section.content.push(paragraph2)
+
+subsection.content.push(paragraph3)
+subsection.content.push(equation)
+
+section.content.push(subsection)
+
+paper.content.push(section)
 ```
 
 ---
 
-# Important Requirements for the Agent
+# 7. Final Tree Representation
 
-The system must:
+After constructing the objects, the structure should look like this:
 
-* correctly detect **sections and subsections**
-* produce **structured JSON**
-* save JSON in **response.json**
-* use **Typst templates for formatting**
-* generate **conference-style PDFs**
+```
+Paper
+ ├─ Title
+ ├─ Authors
+ ├─ Abstract
+ └─ Content
+      └─ Section
+           ├─ Paragraph
+           ├─ Paragraph
+           └─ Subsection
+                ├─ Paragraph
+                └─ Equation
+```
 
 ---
+
+# 8. Key Rule
+
+The hierarchy must always follow this pattern:
+
+```
+Paper.content → contains sections
+Section.content → contains paragraphs or subsections
+Subsection.content → contains paragraphs or equations
+```
+
+Objects must always be appended using:
+
+```
+.content.push()
+```
+
+This ensures the nested structure remains consistent with the JSON schema.
+
+---
+
+# 9. Expected Result
+
+After parsing the JSON and building the objects, the internal structure should match the nested format defined in the schema. The system can then use this structure later for **rendering or formatting**.
+
+---
+
 

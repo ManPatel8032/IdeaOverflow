@@ -23,7 +23,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "typst", "templates")
 
 # ── Valid conferences & layouts ──
-CONFERENCES = ("ieee", "acm", "neurips", "springer", "elsevier")
+# "base" is the default layout style that matches typst/single-column.pdf and typst/double-column.pdf.
+CONFERENCES = ("base", "ieee", "acm", "neurips", "springer", "elsevier")
 LAYOUTS = ("single-column", "double-column")
 
 
@@ -108,17 +109,12 @@ def map_document(document: dict, conference: str, layout: str) -> dict:
     raw_authors = document.get("authors", [])
     authors = _map_authors(raw_authors)
 
+    # ── Abstract & keywords (top-level, not content sections) ──
+    abstract_text = (document.get("abstract") or "").strip()
+    index_terms = document.get("keywords") or document.get("index_terms") or []
+
     # ── Map content blocks ──
     content = []
-
-    # Abstract → first section block
-    abstract_text = (document.get("abstract") or "").strip()
-    if abstract_text:
-        content.append({
-            "type": "section",
-            "title": "Abstract",
-            "content": _text_to_paragraphs(abstract_text),
-        })
 
     # Body sections (prefer nested hierarchy when available)
     nested_sections = document.get("nested_sections") or []
@@ -141,6 +137,8 @@ def map_document(document: dict, conference: str, layout: str) -> dict:
     typst_data = {
         "title": document.get("title", "Untitled"),
         "authors": authors,
+        "abstract": abstract_text,
+        "index_terms": index_terms,
         "content": content,
         "references": references,
     }

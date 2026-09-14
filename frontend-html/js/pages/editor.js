@@ -15,9 +15,14 @@ window.Pages.editor = function (container) {
       const data = await API.getManuscript();
       AppState.isLoading = false;
       if (data.content && Array.isArray(data.content)) {
-        State.setDoc(Parser.transformPaperJsonToDoc(data));
+        window.paperDoc = PaperDocument.fromJSON(data);
+        State.setDoc(window.paperDoc.toFlatDoc());
       } else {
-        State.setDoc(Parser.coerceDoc(data));
+        var flatDoc = Parser.coerceDoc(data);
+        State.setDoc(flatDoc);
+        window.paperDoc = PaperDocument.fromJSON(
+          window.DocumentModel ? DocumentModel.flatToTree(flatDoc) : flatDoc
+        );
       }
       // Explicitly re-render both panels after loading completes
       rerenderEditorPanel();
@@ -37,6 +42,36 @@ window.Pages.editor = function (container) {
   }
 
   fetchManuscript();
+
+  /* ─── Auto-save: persist edits to server on docChanged (debounced) ─── */
+  let _saveTimer = null;
+  let _initialLoad = true;           // skip the first docChanged from fetchManuscript
+  let _jsViewOpen = false;
+  function _showSaveStatus(msg, color) {
+    const bar = document.getElementById('save-status');
+    if (!bar) return;
+    bar.textContent = msg;
+    bar.style.color = color;
+    bar.style.opacity = '1';
+    clearTimeout(bar._fadeTimer);
+    bar._fadeTimer = setTimeout(() => { bar.style.opacity = '0.4'; }, 3000);
+  }
+  State.on('docChanged', () => {
+    if (_initialLoad) { _initialLoad = false; return; }
+    _showSaveStatus('Saving...', 'var(--text-secondary)');
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+      const tree = window.paperDoc
+          ? window.paperDoc.toJSON()
+          : (window.DocumentModel ? DocumentModel.flatToTree(AppState.doc) : docToTypstMappedData(AppState.doc));
+      API.saveManuscript(tree)
+        .then(() => _showSaveStatus('✓ Saved to paper.json', '#22c55e'))
+        .catch(err => {
+          console.warn('Auto-save failed:', err);
+          _showSaveStatus('✗ Save failed – is the server running?', '#ef4444');
+        });
+    }, 800);
+  });
 
   /* ─── Render full editor ─── */
   function render() {
@@ -87,6 +122,7 @@ window.Pages.editor = function (container) {
     State.on('docChanged', () => {
       rerenderEditorPanel();
       rerenderPreviewPanel();
+      if (_jsViewOpen) _refreshJsObjectContent();
     }),
     State.on('conferenceChanged', () => {
       rerenderPreviewPanel();
@@ -200,9 +236,10 @@ window.Pages.editor = function (container) {
     if (AppState.loadError) return `<div class="editor-panel"><div class="p-8 text-center text-rose">${AppState.loadError} <button class="btn btn-sm btn-outline" id="retry-load">Retry</button></div></div>`;
 
     const authorsHTML = doc.authors.map((a, i) => `
-      <div class="author-badge node-clickable" data-node-level="0" data-node-type="author" data-node-title="${a.name}">
-        <span class="name">${a.name}</span>
-        <span>${a.affiliation || ''}</span>
+      <div class="author-badge node-clickable" data-node-level="0" data-node-type="author" data-node-title="${a.name}" style="position:relative;">
+        <span contenteditable="true" class="name" data-edit-author-name="${i}">${a.name}</span>
+        <span contenteditable="true" data-edit-author-affil="${i}">${a.affiliation || ''}</span>
+        <button class="author-remove-btn" data-remove-author="${i}" title="Remove author" style="position:absolute; top:2px; right:2px; background:none; border:none; cursor:pointer; font-size:0.7rem; color:var(--text-muted); line-height:1; padding:2px 4px; border-radius:50%;">&times;</button>
       </div>
     `).join('');
 
@@ -217,8 +254,8 @@ window.Pages.editor = function (container) {
 
         return `
           <div class="ml-6 node-clickable" style="margin-top: 0.5rem;" data-node-level="2" data-node-type="subsection" data-node-title="${sub.name}">
-            <h3 class="text-lg font-semibold text-primary">${idx + 1}.${sIdx + 1} ${sub.name}</h3>
-            <p class="text-secondary" style="margin-top: 0.25rem;">${sub.content}</p>
+            <h3 contenteditable="true" class="text-lg font-semibold text-primary" data-edit-sub-name="${idx}|${sIdx}">${idx + 1}.${sIdx + 1} ${sub.name}</h3>
+            <p contenteditable="true" class="text-secondary" style="margin-top: 0.25rem;" data-edit-sub-content="${idx}|${sIdx}">${sub.content}</p>
             ${subsubsHTML}
           </div>
         `;
@@ -228,9 +265,9 @@ window.Pages.editor = function (container) {
         <div style="margin-top: 2rem;">
           <div class="flex items-baseline gap-3 node-clickable" data-node-level="1" data-node-type="section" data-node-title="${section.name}">
             <span class="section-number">${idx + 1}.</span>
-            <h2 contenteditable="true" class="text-xl font-bold text-primary" data-edit-section-name="${section.id}">${section.name}</h2>
+            <h2 contenteditable="true" class="text-xl font-bold text-primary" data-edit-section-name="${idx}">${section.name}</h2>
           </div>
-          <div contenteditable="true" class="text-secondary leading-relaxed whitespace-pre-wrap" style="margin-top: 0.5rem;" data-edit-section-content="${section.id}">${section.content}</div>
+          <div contenteditable="true" class="text-secondary leading-relaxed whitespace-pre-wrap" style="margin-top: 0.5rem;" data-edit-section-content="${idx}">${section.content}</div>
           ${subsHTML}
         </div>
       `;
@@ -240,13 +277,15 @@ window.Pages.editor = function (container) {
       <div style="margin-top: 2.5rem; padding-top: 2.5rem; border-top: 1px solid var(--border);">
         <h2 class="text-sm font-bold uppercase text-muted mb-6">Tables & Data</h2>
         ${doc.tables.map((table, i) => `
-          <div style="margin-bottom: 2rem; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;">
-            <div class="editor-table caption-bar" style="background: var(--bg-hover); padding: 0.5rem; font-size: 0.75rem; font-weight: 500; border-bottom: 1px solid var(--border);">
-              Table ${i + 1}: ${table.caption || ''}
+          <div style="margin-bottom: 2rem; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; position:relative;">
+            <div class="editor-table caption-bar" style="background: var(--bg-hover); padding: 0.5rem; font-size: 0.75rem; font-weight: 500; border-bottom: 1px solid var(--border); display:flex; align-items:center; gap:0.5rem;">
+              <span>Table ${i + 1}:</span>
+              <span contenteditable="true" data-edit-table-caption="${i}" style="flex:1;">${table.caption || ''}</span>
+              <button data-remove-table="${i}" title="Remove table" style="background:none; border:none; cursor:pointer; font-size:0.8rem; color:var(--text-muted); padding:2px 6px;">&times;</button>
             </div>
             <table class="editor-table">
-              <thead><tr>${table.headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-              <tbody>${table.rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>
+              <thead><tr>${table.headers.map((h, hi) => `<th contenteditable="true" data-edit-table-header="${i}|${hi}">${h}</th>`).join('')}</tr></thead>
+              <tbody>${table.rows.map((row, ri) => `<tr>${row.map((cell, ci) => `<td contenteditable="true" data-edit-table-cell="${i}|${ri}|${ci}">${cell}</td>`).join('')}</tr>`).join('')}</tbody>
             </table>
           </div>
         `).join('')}
@@ -289,8 +328,9 @@ window.Pages.editor = function (container) {
 
     return `
       <div class="editor-panel" id="editor-panel-root">
-        <div class="node-info-bar" id="node-info-bar">
-          <span class="node-info-placeholder">Click any element to inspect its level metadata</span>
+        <div style="display:flex; align-items:center; gap:0.75rem; justify-content:flex-end;">
+          <button class="btn btn-outline btn-sm" id="btn-toggle-jsview" style="font-size:0.7rem; padding:0.2rem 0.5rem; white-space:nowrap;">{ } JS Object</button>
+          <span id="save-status" style="font-size:0.7rem; white-space:nowrap; opacity:0.4; transition:opacity 0.3s;"></span>
         </div>
         <div class="editor-panel-inner">
           <header style="margin-bottom: 1rem;">
@@ -310,6 +350,13 @@ window.Pages.editor = function (container) {
           ${imagesHTML}
           ${referencesHTML}
         </div>
+        <div id="js-object-panel" style="display:none; margin-top:1rem; border-top:2px solid var(--brand-from);">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:0.5rem 0.75rem; background:var(--bg-hover); border-bottom:1px solid var(--border);">
+            <span style="font-size:0.75rem; font-weight:600; color:var(--brand-from); font-family:monospace;">window.paperDoc &nbsp;(paper.json)</span>
+            <span id="js-object-update-ts" style="font-size:0.65rem; color:var(--text-muted);"></span>
+          </div>
+          <pre id="js-object-content" style="margin:0; padding:0.75rem; font-size:0.72rem; line-height:1.5; overflow:auto; max-height:400px; background:var(--bg-base); color:var(--text-primary); font-family:'Fira Code',Consolas,monospace; white-space:pre-wrap; word-break:break-word;"></pre>
+        </div>
       </div>
     `;
   }
@@ -319,7 +366,35 @@ window.Pages.editor = function (container) {
     if (col) {
       col.innerHTML = renderEditorPanel();
       attachEditorInlineEvents();
+      if (_jsViewOpen) _showJsObjectPanel();
     }
+  }
+
+  function _showJsObjectPanel() {
+    const panel = document.getElementById('js-object-panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+    _refreshJsObjectContent();
+  }
+
+  function _refreshJsObjectContent() {
+    const el = document.getElementById('js-object-content');
+    const ts = document.getElementById('js-object-update-ts');
+    if (!el) return;
+    var json = window.paperDoc ? window.paperDoc.toJSON() : (window.DocumentModel ? DocumentModel.flatToTree(AppState.doc) : AppState.doc);
+    el.innerHTML = _syntaxHighlight(JSON.stringify(json, null, 2));
+    if (ts) ts.textContent = 'Updated: ' + new Date().toLocaleTimeString();
+  }
+
+  function _syntaxHighlight(jsonStr) {
+    return jsonStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*")(\s*:)?/g, function (match, str, _, colon) {
+        if (colon) return '<span style="color:#6366f1;font-weight:600;">' + str + '</span>' + colon;
+        return '<span style="color:#22c55e;">' + str + '</span>';
+      })
+      .replace(/\b(true|false)\b/g, '<span style="color:#f59e0b;">$1</span>')
+      .replace(/\b(null)\b/g, '<span style="color:#ef4444;">$1</span>')
+      .replace(/(\b\d+\b)/g, '<span style="color:#3b82f6;">$1</span>');
   }
 
   /* ═══════════ PREVIEW PANEL ═══════════ */
@@ -341,6 +416,7 @@ window.Pages.editor = function (container) {
           </div>
           <div class="flex items-center gap-2">
             <button class="btn btn-outline btn-sm" id="btn-fullpage">⛶ Full Preview</button>
+            <button class="btn btn-outline btn-sm" id="btn-export-json">📋 JSON Tree</button>
             <button class="btn btn-primary btn-sm" id="btn-export">⬇ Export</button>
           </div>
         </div>
@@ -569,7 +645,10 @@ window.Pages.editor = function (container) {
     if (titleEl) {
       titleEl.addEventListener('blur', () => {
         const val = titleEl.textContent.trim();
-        if (val !== AppState.doc.title) State.updateDoc({ title: val });
+        if (val !== AppState.doc.title) {
+          if (window.paperDoc) paperDoc.setTitle(val);
+          else State.updateDoc({ title: val });
+        }
       });
     }
 
@@ -577,29 +656,206 @@ window.Pages.editor = function (container) {
     if (abstractEl) {
       abstractEl.addEventListener('blur', () => {
         const val = abstractEl.textContent.trim();
-        if (val !== AppState.doc.abstract) State.updateDoc({ abstract: val });
+        if (val !== AppState.doc.abstract) {
+          if (window.paperDoc) paperDoc.setAbstract(val);
+          else State.updateDoc({ abstract: val });
+        }
       });
     }
 
+    // Author name editing
+    document.querySelectorAll('[data-edit-author-name]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const idx = parseInt(el.dataset.editAuthorName, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateAuthor(idx, { name: val });
+        } else {
+          const authors = AppState.doc.authors.map((a, i) => i === idx ? { ...a, name: val } : a);
+          State.updateDoc({ authors });
+        }
+      });
+    });
+
+    // Author affiliation editing
+    document.querySelectorAll('[data-edit-author-affil]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const idx = parseInt(el.dataset.editAuthorAffil, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateAuthor(idx, { affiliation: val });
+        } else {
+          const authors = AppState.doc.authors.map((a, i) => i === idx ? { ...a, affiliation: val } : a);
+          State.updateDoc({ authors });
+        }
+      });
+    });
+
+    // Author remove
+    document.querySelectorAll('[data-remove-author]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.removeAuthor, 10);
+        if (window.paperDoc) {
+          paperDoc.removeAuthor(idx);
+        } else {
+          const authors = AppState.doc.authors.filter((_, i) => i !== idx);
+          State.updateDoc({ authors });
+        }
+      });
+    });
+
+    // Table caption editing
+    document.querySelectorAll('[data-edit-table-caption]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const ti = parseInt(el.dataset.editTableCaption, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateTableCaption(ti, val);
+        } else {
+          const tables = AppState.doc.tables.map((t, i) => i === ti ? { ...t, caption: val } : t);
+          State.updateDoc({ tables });
+        }
+      });
+    });
+
+    // Table header editing
+    document.querySelectorAll('[data-edit-table-header]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const [tiStr, ciStr] = el.dataset.editTableHeader.split('|');
+        const ti = parseInt(tiStr, 10);
+        const ci = parseInt(ciStr, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateTableHeader(ti, ci, val);
+        } else {
+          const tables = AppState.doc.tables.map((t, i) => {
+            if (i !== ti) return t;
+            const headers = t.headers.map((h, j) => j === ci ? val : h);
+            return { ...t, headers };
+          });
+          State.updateDoc({ tables });
+        }
+      });
+    });
+
+    // Table cell editing
+    document.querySelectorAll('[data-edit-table-cell]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const [tiStr, riStr, ciStr] = el.dataset.editTableCell.split('|');
+        const ti = parseInt(tiStr, 10);
+        const ri = parseInt(riStr, 10);
+        const ci = parseInt(ciStr, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateTableCell(ti, ri, ci, val);
+        } else {
+          const tables = AppState.doc.tables.map((t, i) => {
+            if (i !== ti) return t;
+            const rows = t.rows.map((row, j) => j !== ri ? row : row.map((c, k) => k === ci ? val : c));
+            return { ...t, rows };
+          });
+          State.updateDoc({ tables });
+        }
+      });
+    });
+
+    // Table remove
+    document.querySelectorAll('[data-remove-table]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ti = parseInt(btn.dataset.removeTable, 10);
+        if (window.paperDoc) {
+          paperDoc.removeTable(ti);
+        } else {
+          const tables = AppState.doc.tables.filter((_, i) => i !== ti);
+          State.updateDoc({ tables });
+        }
+      });
+    });
+
     document.querySelectorAll('[data-edit-section-name]').forEach(el => {
       el.addEventListener('blur', () => {
-        const id = el.dataset.editSectionName;
+        const idx = parseInt(el.dataset.editSectionName, 10);
         const val = el.textContent.trim();
-        const sections = AppState.doc.sections.map(s => s.id === id ? { ...s, name: val } : s);
-        State.updateDoc({ sections });
+        if (window.paperDoc) {
+          paperDoc.updateSectionTitle(idx, val);
+        } else {
+          const sections = AppState.doc.sections.map((s, i) => i === idx ? { ...s, name: val } : s);
+          State.updateDoc({ sections });
+        }
       });
     });
 
     document.querySelectorAll('[data-edit-section-content]').forEach(el => {
       el.addEventListener('blur', () => {
-        const id = el.dataset.editSectionContent;
+        const idx = parseInt(el.dataset.editSectionContent, 10);
         const val = el.textContent.trim();
-        const sections = AppState.doc.sections.map(s => s.id === id ? { ...s, content: val } : s);
-        State.updateDoc({ sections });
+        if (window.paperDoc) {
+          paperDoc.updateSectionContent(idx, val);
+        } else {
+          const sections = AppState.doc.sections.map((s, i) => i === idx ? { ...s, content: val } : s);
+          State.updateDoc({ sections });
+        }
+      });
+    });
+
+    // Subsection name editing
+    document.querySelectorAll('[data-edit-sub-name]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const [secIdxStr, subIdxStr] = el.dataset.editSubName.split('|');
+        const secIdx = parseInt(secIdxStr, 10);
+        const subIdx = parseInt(subIdxStr, 10);
+        // Strip leading numbering like "1.2 " that was rendered inline
+        const raw = el.textContent.trim();
+        const val = raw.replace(/^\d+\.\d+\s*/, '');
+        if (window.paperDoc) {
+          paperDoc.updateSubsectionTitle(secIdx, subIdx, val);
+        } else {
+          const sections = AppState.doc.sections.map((s, i) => {
+            if (i !== secIdx) return s;
+            const subs = (s.subsections || []).map((sub, j) => j === subIdx ? { ...sub, name: val } : sub);
+            return { ...s, subsections: subs };
+          });
+          State.updateDoc({ sections });
+        }
+      });
+    });
+
+    // Subsection content editing
+    document.querySelectorAll('[data-edit-sub-content]').forEach(el => {
+      el.addEventListener('blur', () => {
+        const [secIdxStr, subIdxStr] = el.dataset.editSubContent.split('|');
+        const secIdx = parseInt(secIdxStr, 10);
+        const subIdx = parseInt(subIdxStr, 10);
+        const val = el.textContent.trim();
+        if (window.paperDoc) {
+          paperDoc.updateSubsectionContent(secIdx, subIdx, val);
+        } else {
+          const sections = AppState.doc.sections.map((s, i) => {
+            if (i !== secIdx) return s;
+            const subs = (s.subsections || []).map((sub, j) => j === subIdx ? { ...sub, content: val } : sub);
+            return { ...s, subsections: subs };
+          });
+          State.updateDoc({ sections });
+        }
       });
     });
 
     document.getElementById('retry-load')?.addEventListener('click', fetchManuscript);
+
+    // JS Object view toggle
+    document.getElementById('btn-toggle-jsview')?.addEventListener('click', () => {
+      _jsViewOpen = !_jsViewOpen;
+      const panel = document.getElementById('js-object-panel');
+      if (panel) {
+        if (_jsViewOpen) { _showJsObjectPanel(); }
+        else { panel.style.display = 'none'; }
+      }
+      const btn = document.getElementById('btn-toggle-jsview');
+      if (btn) btn.style.background = _jsViewOpen ? 'var(--brand-from)' : '';
+      if (btn) btn.style.color = _jsViewOpen ? '#fff' : '';
+    });
 
     // Node click handlers for level/type metadata
     document.querySelectorAll('.node-clickable').forEach(el => {
@@ -618,37 +874,18 @@ window.Pages.editor = function (container) {
         document.querySelectorAll('.node-clickable.node-selected').forEach(n => n.classList.remove('node-selected'));
         el.classList.add('node-selected');
 
-        // Update info bar
-        updateNodeInfoBar(node);
+
       });
     });
   }
 
-  function updateNodeInfoBar(node) {
-    const bar = document.getElementById('node-info-bar');
-    if (!bar) return;
 
-    const levelLabels = { 0: 'Top-level', 1: 'Level 1', 2: 'Level 2', 3: 'Level 3' };
-    const typeColors = {
-      title: '#6366f1', abstract: '#8b5cf6', author: '#ec4899',
-      section: '#3b82f6', subsection: '#06b6d4', subsubsection: '#14b8a6',
-    };
-    const color = typeColors[node.type] || 'var(--brand-from)';
-
-    bar.innerHTML = `
-      <div class="node-info-content">
-        <span class="node-info-badge" style="background: ${color};">${node.type}</span>
-        <span class="node-info-level">${levelLabels[node.level] || 'Level ' + node.level}</span>
-        <span class="node-info-title">${node.title}</span>
-      </div>
-      <code class="node-info-json">{level: ${node.level}, title: "${node.title}", type: "${node.type}"}</code>
-    `;
-  }
 
   /* ── Preview ── */
   function attachPreviewEvents() {
     document.getElementById('btn-fullpage')?.addEventListener('click', openFullPagePreview);
-    document.getElementById('btn-export')?.addEventListener('click', () => window.print());
+    document.getElementById('btn-export')?.addEventListener('click', exportTypstPdf);
+    document.getElementById('btn-export-json')?.addEventListener('click', exportJsonTree);
   }
 
   /* ── Resize handles ── */
@@ -744,7 +981,7 @@ window.Pages.editor = function (container) {
 
   function renderSectionForm(area, overlay) {
     const doc = AppState.doc;
-    const options = doc.sections.map(s => `<option value="after:${s.id}">After: ${s.name}</option>`).join('');
+    const options = doc.sections.map((s, i) => `<option value="after:${i}">After: ${s.name}</option>`).join('');
     area.innerHTML = `
       <form id="modal-form">
         <div class="form-group">
@@ -769,22 +1006,23 @@ window.Pages.editor = function (container) {
       const pos = area.querySelector('#mf-position').value;
       const name = area.querySelector('#mf-name').value.trim() || 'Untitled Section';
       const content = area.querySelector('#mf-content').value.trim();
-      const next = [...doc.sections];
-      let idx = next.length;
-      if (pos === 'start') idx = 0;
-      else if (pos.startsWith('after:')) {
-        const afterIdx = next.findIndex(s => s.id === pos.slice(6));
-        if (afterIdx >= 0) idx = afterIdx + 1;
+      let position;
+      if (pos === 'start') position = 0;
+      else if (pos.startsWith('after:')) position = parseInt(pos.slice(6), 10) + 1;
+      if (window.paperDoc) {
+        paperDoc.addSection(name, content, position);
+      } else {
+        const next = [...doc.sections];
+        next.splice(position ?? next.length, 0, { id: State.uid('sec'), name, content, subsections: [] });
+        State.updateDoc({ sections: next });
       }
-      next.splice(idx, 0, { id: State.uid('sec'), name, content, subsections: [] });
-      State.updateDoc({ sections: next });
       overlay.remove();
     });
   }
 
   function renderSubsectionForm(area, overlay) {
     const doc = AppState.doc;
-    const opts = doc.sections.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    const opts = doc.sections.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
     area.innerHTML = `
       <form id="modal-form">
         <div class="form-group"><label class="form-label">Parent section</label><select class="form-input" id="mf-parent">${opts}</select></div>
@@ -796,21 +1034,25 @@ window.Pages.editor = function (container) {
     area.querySelector('#mf-cancel').addEventListener('click', () => overlay.remove());
     area.querySelector('#modal-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const parentId = area.querySelector('#mf-parent').value;
+      const parentIdx = parseInt(area.querySelector('#mf-parent').value, 10);
       const name = area.querySelector('#mf-name').value.trim() || 'Untitled Subsection';
       const content = area.querySelector('#mf-content').value.trim();
-      const sections = doc.sections.map(s => {
-        if (s.id !== parentId) return s;
-        return { ...s, subsections: [...s.subsections, { id: State.uid('sub'), name, content }] };
-      });
-      State.updateDoc({ sections });
+      if (window.paperDoc) {
+        paperDoc.addSubsection(parentIdx, name, content);
+      } else {
+        const sections = doc.sections.map((s, i) => {
+          if (i !== parentIdx) return s;
+          return { ...s, subsections: [...s.subsections, { id: State.uid('sub'), name, content }] };
+        });
+        State.updateDoc({ sections });
+      }
       overlay.remove();
     });
   }
 
   function renderTableForm(area, overlay) {
     const doc = AppState.doc;
-    const opts = doc.sections.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    const opts = doc.sections.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
     area.innerHTML = `
       <form id="modal-form">
         <div class="form-group"><label class="form-label">Attach to section (optional)</label><select class="form-input" id="mf-section"><option value="">No specific section</option>${opts}</select></div>
@@ -825,20 +1067,26 @@ window.Pages.editor = function (container) {
       e.preventDefault();
       const headers = area.querySelector('#mf-headers').value.split(',').map(h => h.trim()).filter(Boolean);
       const rows = area.querySelector('#mf-rows').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => l.split(',').map(c => c.trim()));
-      const table = {
-        id: State.uid('table'),
-        caption: area.querySelector('#mf-caption').value.trim() || undefined,
-        headers, rows,
-        sectionId: area.querySelector('#mf-section').value || undefined,
-      };
-      State.updateDoc({ tables: [...doc.tables, table] });
+      const secVal = area.querySelector('#mf-section').value;
+      const secIdx = secVal !== '' ? parseInt(secVal, 10) : null;
+      if (window.paperDoc) {
+        paperDoc.addTable(secIdx, area.querySelector('#mf-caption').value.trim(), headers, rows);
+      } else {
+        const table = {
+          id: State.uid('table'),
+          caption: area.querySelector('#mf-caption').value.trim() || undefined,
+          headers, rows,
+          sectionId: secVal || undefined,
+        };
+        State.updateDoc({ tables: [...doc.tables, table] });
+      }
       overlay.remove();
     });
   }
 
   function renderImageForm(area, overlay) {
     const doc = AppState.doc;
-    const opts = doc.sections.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    const opts = doc.sections.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
     area.innerHTML = `
       <form id="modal-form">
         <div class="form-group"><label class="form-label">Attach to section (optional)</label><select class="form-input" id="mf-section"><option value="">No specific section</option>${opts}</select></div>
@@ -851,14 +1099,20 @@ window.Pages.editor = function (container) {
     area.querySelector('#mf-cancel').addEventListener('click', () => overlay.remove());
     area.querySelector('#modal-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const img = {
-        id: State.uid('img'),
-        url: area.querySelector('#mf-url').value.trim(),
-        caption: area.querySelector('#mf-caption').value.trim() || undefined,
-        alt: area.querySelector('#mf-alt').value.trim() || undefined,
-        sectionId: area.querySelector('#mf-section').value || undefined,
-      };
-      State.updateDoc({ images: [...doc.images, img] });
+      const secVal = area.querySelector('#mf-section').value;
+      const secIdx = secVal !== '' ? parseInt(secVal, 10) : null;
+      if (window.paperDoc) {
+        paperDoc.addImage(secIdx, area.querySelector('#mf-url').value.trim(), area.querySelector('#mf-caption').value.trim());
+      } else {
+        const img = {
+          id: State.uid('img'),
+          url: area.querySelector('#mf-url').value.trim(),
+          caption: area.querySelector('#mf-caption').value.trim() || undefined,
+          alt: area.querySelector('#mf-alt').value.trim() || undefined,
+          sectionId: secVal || undefined,
+        };
+        State.updateDoc({ images: [...doc.images, img] });
+      }
       overlay.remove();
     });
   }
@@ -875,12 +1129,14 @@ window.Pages.editor = function (container) {
     area.querySelector('#mf-cancel').addEventListener('click', () => overlay.remove());
     area.querySelector('#modal-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const author = {
-        name: area.querySelector('#mf-name').value.trim() || 'Author',
-        affiliation: area.querySelector('#mf-affiliation').value.trim() || undefined,
-        email: area.querySelector('#mf-email').value.trim() || undefined,
-      };
-      State.updateDoc({ authors: [...AppState.doc.authors, author] });
+      const name = area.querySelector('#mf-name').value.trim() || 'Author';
+      const affiliation = area.querySelector('#mf-affiliation').value.trim() || '';
+      const email = area.querySelector('#mf-email').value.trim() || '';
+      if (window.paperDoc) {
+        paperDoc.addAuthor(name, affiliation, email);
+      } else {
+        State.updateDoc({ authors: [...AppState.doc.authors, { name, affiliation, email }] });
+      }
       overlay.remove();
     });
   }
@@ -942,7 +1198,7 @@ window.Pages.editor = function (container) {
     }
 
     overlay.querySelector('#fp-close').addEventListener('click', closeOverlay);
-    overlay.querySelector('#fp-export').addEventListener('click', () => window.print());
+    overlay.querySelector('#fp-export').addEventListener('click', exportTypstPdf);
     overlay.querySelector('#fp-zoom-out').addEventListener('click', () => { zoom = Math.max(50, zoom - 10); updateZoom(); });
     overlay.querySelector('#fp-zoom-in').addEventListener('click', () => { zoom = Math.min(200, zoom + 10); updateZoom(); });
     overlay.querySelector('#fp-zoom-reset').addEventListener('click', () => { zoom = 100; updateZoom(); });
@@ -1073,5 +1329,129 @@ window.Pages.editor = function (container) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function docToTypstMappedData(doc) {
+    function paragraphBlocksFromText(text) {
+      const t = (text || '').toString().trim();
+      if (!t) return [];
+      // Preserve blank-line paragraph breaks
+      return t.split(/\n\s*\n/g).map(p => p.trim()).filter(Boolean).map(p => ({ type: 'paragraph', text: p }));
+    }
+
+    function sectionToBlocks(section) {
+      const blocks = [];
+      blocks.push({
+        type: 'section',
+        title: section.name || 'Untitled',
+        content: [
+          ...paragraphBlocksFromText(section.content),
+          ...(Array.isArray(section.subsections) ? section.subsections.map(sub => ({
+            type: 'subsection',
+            title: sub.name || 'Untitled',
+            content: paragraphBlocksFromText(sub.content),
+          })) : []),
+        ],
+      });
+      return blocks;
+    }
+
+    // Attach images/tables under a dedicated "Figures" / "Tables" section (keeps layout deterministic)
+    const figures = (doc.images || []).map(img => ({
+      type: 'image',
+      src: img.url || '',
+      caption: img.caption || '',
+      width: '85%',
+    })).filter(i => i.src);
+
+    const tables = (doc.tables || []).map(t => ({
+      type: 'table',
+      columns: Math.max(1, (t.headers || []).length || (t.rows?.[0]?.length || 2)),
+      caption: t.caption || '',
+      headers: t.headers || [],
+      data: t.rows || [],
+    }));
+
+    const content = [];
+    // Keep abstract as the first section for consistency with Typst base templates
+    if ((doc.abstract || '').trim()) {
+      content.push({
+        type: 'section',
+        title: 'Abstract',
+        content: paragraphBlocksFromText(doc.abstract),
+      });
+    }
+    (doc.sections || []).forEach(sec => content.push(...sectionToBlocks(sec)));
+    if (figures.length) {
+      content.push({ type: 'section', title: 'Figures', content: figures });
+    }
+    if (tables.length) {
+      content.push({ type: 'section', title: 'Tables', content: tables });
+    }
+
+    return {
+      title: doc.title || 'Untitled',
+      authors: (doc.authors || []).map(a => ({
+        name: a.name || '',
+        affiliation: a.affiliation || '',
+      })),
+      content,
+      references: Array.isArray(doc.references) ? doc.references.map(r => ({ id: r.id || '', citation: r.citation || '' })) : [],
+    };
+  }
+
+  async function exportTypstPdf() {
+    try {
+      const conf = AppState.selectedConference;
+      const fmt = Conferences.CONFERENCE_FORMATS[conf] || Conferences.CONFERENCE_FORMATS.ieee;
+      const layout = fmt.layout === 'two-column' ? 'double-column' : 'single-column';
+
+      // Force "base" templates so exported PDFs match typst/single-column.pdf and typst/double-column.pdf
+      const mapped_data = docToTypstMappedData(AppState.doc);
+      const blob = await API.compileTypst({
+        conference: 'base',
+        layout,
+        mapped_data,
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = layout === 'double-column' ? 'double-column.pdf' : 'single-column.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) {
+      alert(err?.message || 'Failed to export PDF. Make sure backend is running.');
+    }
+  }
+
+  /**
+   * Export the current editor document as a nested JSON tree
+   * following the paper-schema.json structure from Project.md:
+   *   Paper.content → sections
+   *   Section.content → paragraphs / subsections
+   *   Subsection.content → paragraphs / equations
+   */
+  function exportJsonTree() {
+    var tree;
+    if (window.paperDoc) {
+      tree = window.paperDoc.toJSON();
+    } else if (window.DocumentModel) {
+      tree = DocumentModel.flatToTree(AppState.doc);
+    } else {
+      tree = docToTypstMappedData(AppState.doc);
+    }
+    // Persist to server
+    API.saveManuscript(tree).catch(err => console.warn('Save failed:', err));
+    // Also download locally
+    var blob = new Blob([JSON.stringify(tree, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'paper.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 };

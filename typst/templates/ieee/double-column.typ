@@ -55,6 +55,19 @@
   ]
   v(2em)
 
+  // Abstract & Index Terms (full-width, before columns)
+  if "abstract" in data and data.abstract != "" {
+    text(weight: "bold", style: "italic", size: 9pt)[Abstract—]
+    text(style: "italic", size: 9pt)[#data.abstract]
+    v(0.5em)
+  }
+
+  if "index-terms" in data {
+    text(weight: "bold", style: "italic", size: 9pt)[Index Terms—]
+    text(style: "italic", size: 9pt)[#data.index-terms.join(", ")]
+    v(0.5em)
+  }
+
   // Begin two-column layout
   show: columns.with(2, gutter: 0.25in)
 

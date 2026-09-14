@@ -1,8 +1,109 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Typst IEEE Paper Schema",
-  "description": "Schema for generating an IEEE academic paper using the charged-ieee Typst template.",
+  "title": "Paper Document Schema",
+  "description": "Schema for a nested research paper document tree. Paper → Sections → Subsections → Paragraphs / Equations.",
   "type": "object",
+  "definitions": {
+    "paragraph": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "paragraph" },
+        "text": { "type": "string", "description": "The text content of the paragraph." }
+      },
+      "required": ["type", "text"]
+    },
+    "equation": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "equation" },
+        "math": { "type": "string", "description": "The mathematical expression." }
+      },
+      "required": ["type", "math"]
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "image" },
+        "src": { "type": "string" },
+        "caption": { "type": "string" },
+        "width": { "type": "string" }
+      },
+      "required": ["type"]
+    },
+    "table": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "table" },
+        "columns": { "type": "integer" },
+        "caption": { "type": "string" },
+        "headers": { "type": "array", "items": { "type": "string" } },
+        "data": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } }
+      },
+      "required": ["type"]
+    },
+    "subsubsection": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "subsubsection" },
+        "title": { "type": "string", "description": "Title of the subsubsection." },
+        "content": {
+          "type": "array",
+          "description": "Content items inside this subsubsection.",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/paragraph" },
+              { "$ref": "#/definitions/equation" },
+              { "$ref": "#/definitions/image" },
+              { "$ref": "#/definitions/table" }
+            ]
+          }
+        }
+      },
+      "required": ["type", "title", "content"]
+    },
+    "subsection": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "subsection" },
+        "title": { "type": "string", "description": "Title of the subsection." },
+        "content": {
+          "type": "array",
+          "description": "Content items inside this subsection.",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/paragraph" },
+              { "$ref": "#/definitions/equation" },
+              { "$ref": "#/definitions/image" },
+              { "$ref": "#/definitions/table" },
+              { "$ref": "#/definitions/subsubsection" }
+            ]
+          }
+        }
+      },
+      "required": ["type", "title", "content"]
+    },
+    "section": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "section" },
+        "title": { "type": "string", "description": "Title of the section (e.g. Introduction, Methodology)." },
+        "content": {
+          "type": "array",
+          "description": "Content items inside this section.",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/paragraph" },
+              { "$ref": "#/definitions/equation" },
+              { "$ref": "#/definitions/image" },
+              { "$ref": "#/definitions/table" },
+              { "$ref": "#/definitions/subsection" }
+            ]
+          }
+        }
+      },
+      "required": ["type", "title", "content"]
+    }
+  },
   "properties": {
     "title": {
       "type": "string",
@@ -15,9 +116,7 @@
     "index_terms": {
       "type": "array",
       "description": "Keywords or index terms for the paper.",
-      "items": {
-        "type": "string"
-      },
+      "items": { "type": "string" },
       "uniqueItems": true
     },
     "authors": {
@@ -26,51 +125,34 @@
       "items": {
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string",
-            "description": "Full name of the author."
-          },
-          "department": {
-            "type": "string",
-            "description": "Author's department (e.g., Computer Science)."
-          },
-          "organization": {
-            "type": "string",
-            "description": "Author's university or company."
-          },
-          "location": {
-            "type": "string",
-            "description": "City and Country of the organization."
-          },
-          "email": {
-            "type": "string",
-            "format": "email",
-            "description": "Author's contact email."
-          }
+          "name": { "type": "string", "description": "Full name of the author." },
+          "department": { "type": "string", "description": "Author's department." },
+          "organization": { "type": "string", "description": "Author's university or company." },
+          "location": { "type": "string", "description": "City and Country." },
+          "email": { "type": "string", "format": "email", "description": "Contact email." }
         },
-        "required": ["name", "organization", "email"]
+        "required": ["name"]
       },
       "minItems": 1
     },
-    "sections": {
+    "content": {
       "type": "array",
-      "description": "The main body sections of the document.",
+      "description": "Top-level content array containing section objects.",
+      "items": { "$ref": "#/definitions/section" },
+      "minItems": 1
+    },
+    "references": {
+      "type": "array",
+      "description": "List of references cited in the paper.",
       "items": {
         "type": "object",
         "properties": {
-          "heading": {
-            "type": "string",
-            "description": "The title of the section (e.g., Introduction, Methodology)."
-          },
-          "content": {
-            "type": "string",
-            "description": "The text content of the section. Supports Typst markup."
-          }
+          "id": { "type": "string" },
+          "citation": { "type": "string" }
         },
-        "required": ["heading", "content"]
-      },
-      "minItems": 1
+        "required": ["id", "citation"]
+      }
     }
   },
-  "required": ["title", "abstract", "authors", "sections"]
+  "required": ["title", "authors", "content"]
 }

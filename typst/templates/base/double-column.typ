@@ -1,82 +1,74 @@
 // ═══════════════════════════════════════════
-//  NeurIPS Conference — Double-Column Template
+//  Base Layout — Double-Column Template
+//  (Matches typst/double-column.pdf style)
 // ═══════════════════════════════════════════
 
 #let render(data) = {
+  // Document settings
   set document(title: data.title, author: data.authors.map(a => a.name))
-  set page(paper: "us-letter", margin: (top: 1in, bottom: 1in, left: 0.75in, right: 0.75in))
-  set text(font: "Times New Roman", size: 9pt)
-  set par(justify: true, leading: 0.5em)
-  set heading(numbering: "1.1.1")
+  set page(paper: "a4", margin: 1in)
+  set text(font: "New Computer Modern", size: 10pt)
+  set par(justify: true, leading: 0.55em)
+  set heading(numbering: "1.1.")
   set math.equation(numbering: "(1)")
 
-  // NeurIPS heading styles
-  show heading.where(level: 1): it => {
-    v(1em)
-    text(weight: "bold", size: 11pt, it)
-    v(0.5em)
-  }
-  show heading.where(level: 2): it => {
-    v(0.8em)
-    text(weight: "bold", size: 9pt, it)
-    v(0.3em)
-  }
-  show heading.where(level: 3): it => {
-    v(0.6em)
-    text(weight: "bold", style: "italic", size: 9pt, it)
-    v(0.2em)
-  }
-
-  // Reference citation helper
+  // Helper: resolve @IDs → numbers, then evaluate markup
   let process-text(text-str) = {
     let resolved-str = text-str
     if "references" in data {
       let i = 1
       for ref in data.references {
-        resolved-str = resolved-str.replace("@" + ref.id, "[" + str(i) + "]")
+        resolved-str = resolved-str.replace("@" + ref.id, str(i))
         i += 1
       }
     }
-    resolved-str
+    eval(resolved-str, mode: "markup")
   }
 
-  // Title — full-width
+  // Title and authors (spans both columns)
   align(center)[
     #block(text(weight: "bold", size: 17pt, eval(data.title, mode: "markup")))
-    #v(1.5em)
+    #v(1em)
     #grid(
       columns: calc.min(data.authors.len(), 3),
       gutter: 2em,
       ..data.authors.map(a => align(center)[
-        #text(weight: "bold", size: 10pt)[#eval(a.name, mode: "markup")] \
-        #text(size: 8pt)[#eval(a.affiliation, mode: "markup")]
+        *#eval(a.name, mode: "markup")* \
+        _#eval(a.affiliation, mode: "markup")_
       ])
     )
   ]
   v(2em)
 
-  // Abstract & Keywords (full-width, before columns)
+  // Abstract (spans full width, before columns)
   if "abstract" in data and data.abstract != "" {
-    align(center, text(weight: "bold", size: 11pt)[Abstract])
-    v(0.3em)
-    block(inset: (x: 2em))[
-      #text(size: 10pt)[#eval(data.abstract, mode: "markup")]
+    block(
+      width: 100%,
+      inset: (x: 2em, y: 1em),
+      fill: rgb("#f8f9fa"),
+      radius: 4pt,
+      stroke: 0.5pt + rgb("#dee2e6"),
+    )[
+      #text(weight: "bold", size: 10pt)[Abstract] \
+      #v(0.3em)
+      #text(style: "italic", size: 10pt)[#eval(data.abstract, mode: "markup")]
     ]
     v(0.5em)
   }
 
+  // Index Terms
   if "index-terms" in data {
     block(inset: (x: 2em))[
-      #text(weight: "bold", size: 9pt)[Keywords: ]
-      #text(size: 9pt)[#data.index-terms.join(", ")]
+      #text(weight: "bold", size: 9pt)[Index Terms — ]
+      #text(size: 9pt, style: "italic")[#data.index-terms.join(", ")]
     ]
     v(0.5em)
   }
 
-  // Begin two-column layout
-  show: columns.with(2, gutter: 0.3in)
+  // Start two-column layout for the body
+  show: columns.with(2, gutter: 1.5em)
 
-  // Recursive block renderer
+  // Recursive renderer
   let render-blocks(blocks) = {
     for item in blocks {
       if item.type == "section" {
@@ -89,7 +81,7 @@
         heading(level: 3)[#eval(item.title, mode: "markup")]
         if "content" in item { render-blocks(item.content) }
       } else if item.type == "paragraph" {
-        item.text
+        process-text(item.text)
       } else if item.type == "equation" {
         math.equation(block: true, eval(item.math, mode: "math"))
       } else if item.type == "image" {
@@ -116,19 +108,22 @@
     }
   }
 
-  if "content" in data { render-blocks(data.content) }
+  if "content" in data {
+    render-blocks(data.content)
+  }
 
-  // NeurIPS references
+  // References
   if "references" in data and data.references.len() > 0 {
-    v(2em)
+    v(1.5em)
     heading(level: 1, numbering: none)[References]
-    set text(size: 8pt)
+
     let i = 1
     for ref in data.references {
-      block(spacing: 0.5em)[
+      block[
         [#i] #eval(ref.citation, mode: "markup")
       ]
       i += 1
     }
   }
 }
+

@@ -106,6 +106,8 @@ def generate(
 
     # Copy the template file into the output directory so Typst can find it
     _copy_template_tree(conference, layout, output_dir)
+    # Copy any local image assets referenced by the data (so Typst can resolve them)
+    _copy_referenced_assets(data, output_dir, conference)
 
     return {
         "status": "success",
@@ -163,6 +165,21 @@ def _build_typst_source(data: dict, conference: str, layout: str) -> str:
         lines.append(f'    (name: "{name}", affiliation: "{affiliation}"),')
     lines.append("  ),")
     lines.append("")
+
+    # ── Abstract ──
+    abstract_text = data.get("abstract", "") or ""
+    if abstract_text:
+        lines.append(f'  abstract: "{_escape(abstract_text)}",')
+    else:
+        lines.append('  abstract: "",')
+    lines.append("")
+
+    # ── Index Terms ──
+    index_terms = data.get("index_terms", []) or []
+    if index_terms:
+        terms_str = ", ".join(f'"{_escape(t)}"' for t in index_terms)
+        lines.append(f"  index-terms: ({terms_str}),")
+        lines.append("")
 
     # ── Content ──
     lines.append("  content: (")
@@ -255,3 +272,63 @@ def _copy_template_tree(conference: str, layout: str, output_dir: str) -> None:
     dest_file = os.path.join(dest_dir, f"{layout}.typ")
     if not os.path.exists(dest_file):
         shutil.copy2(src_file, dest_file)
+
+
+def _copy_referenced_assets(data: dict, output_dir: str, conference: str) -> None:
+    """
+    Copy local image assets referenced in mapped_data/content into output_dir.
+    This makes relative paths like "diagram.png" work during compilation.
+    """
+    copied: set[str] = set()
+    template_asset_dir = os.path.join(output_dir, "templates", conference)
+    os.makedirs(template_asset_dir, exist_ok=True)
+
+    def walk(blocks: list[dict]) -> None:
+        for b in blocks or []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "image":
+                src = (b.get("src") or "").strip()
+                if not src:
+                    continue
+                # Skip URLs/data URIs
+                if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", src) or src.startswith("data:"):
+                    continue
+
+                # Absolute paths can work locally; we only copy when file exists.
+                candidate_paths = []
+                if os.path.isabs(src):
+                    candidate_paths.append(src)
+                else:
+                    # Prefer project typst/ assets
+                    candidate_paths.append(os.path.join(TYPST_DIR, src))
+                    # Also allow relative to repo root
+                    candidate_paths.append(os.path.join(BASE_DIR, src))
+
+                src_path = next((p for p in candidate_paths if os.path.isfile(p)), None)
+                if not src_path:
+                    continue
+
+                dest_name = os.path.basename(src)
+                if dest_name in copied:
+                    continue
+
+                try:
+                    # Copy to output root (useful if assets referenced from paper.typ)
+                    shutil.copy2(src_path, os.path.join(output_dir, dest_name))
+                    # Also copy next to the template file, because Typst resolves paths
+                    # relative to the file where image() is called (the template).
+                    shutil.copy2(src_path, os.path.join(template_asset_dir, dest_name))
+                    copied.add(dest_name)
+                except Exception:
+                    # Asset copy is best-effort; compilation will surface missing file if needed.
+                    pass
+
+            # Recurse into nested content
+            child = b.get("content")
+            if isinstance(child, list):
+                walk(child)
+
+    content = data.get("content")
+    if isinstance(content, list):
+        walk(content)

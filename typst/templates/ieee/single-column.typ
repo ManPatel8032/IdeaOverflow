@@ -55,6 +55,20 @@
   ]
   v(2em)
 
+  // Abstract
+  if "abstract" in data and data.abstract != "" {
+    text(weight: "bold", style: "italic", size: 9pt)[Abstract—]
+    text(style: "italic", size: 9pt)[#data.abstract]
+    v(0.5em)
+  }
+
+  // Index Terms
+  if "index-terms" in data {
+    text(weight: "bold", style: "italic", size: 9pt)[Index Terms—]
+    text(style: "italic", size: 9pt)[#data.index-terms.join(", ")]
+    v(1em)
+  }
+
   // Recursive block renderer
   let render-blocks(blocks) = {
     for item in blocks {

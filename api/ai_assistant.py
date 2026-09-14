@@ -15,7 +15,7 @@ async def ask_gemini(latex_code: str, query: str) -> str:
 
     # Initialize the client. We will use the async (aio) methods for FastAPI.
     client = genai.Client(api_key=api_key)
-    model = "gemini-3-flash-preview"
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
     # Construct a prompt that forces the AI to base its answer on the researcher's document
     system_prompt = (

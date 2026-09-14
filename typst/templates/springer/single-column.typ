@@ -55,6 +55,20 @@
   ]
   v(2em)
 
+  // Abstract
+  if "abstract" in data and data.abstract != "" {
+    text(weight: "bold", size: 10pt)[Abstract. ]
+    text(size: 10pt)[#eval(data.abstract, mode: "markup")]
+    v(0.5em)
+  }
+
+  // Keywords
+  if "index-terms" in data {
+    text(weight: "bold", size: 9pt)[Keywords: ]
+    text(size: 9pt)[#data.index-terms.join(" \u{00B7} ")]
+    v(1em)
+  }
+
   // Recursive block renderer
   let render-blocks(blocks) = {
     for item in blocks {

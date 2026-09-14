@@ -13,4 +13,4 @@ echo [INFO] Press Ctrl+C to stop
 echo.
 
 REM Start the plugin backend
-python -m uvicorn plugins.overleaf.main:app --reload --port 8000
+python -m uvicorn plugins.main:app --reload --port 8000

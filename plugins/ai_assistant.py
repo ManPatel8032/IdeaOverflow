@@ -3,8 +3,6 @@ import json
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY
-api_key = GEMINI_API_KEY
-client = genai.Client(api_key=api_key) if api_key else None
 # Preset JSON configuration for conferences
 CONFERENCE_PRESETS = {
     "ACL": {
@@ -62,8 +60,10 @@ JOURNAL_PRESETS = {
 }
 
 async def ask_gemini(latex_code: str, query: str, action_type: str = "chat") -> str:
-    if not api_key: return "Error: API key missing."
-    model = "gemini-2.5-flash"
+    api_key = GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    if not api_key: return "Error: API key missing. Please set GEMINI_API_KEY in .env"
+    client = genai.Client(api_key=api_key)
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
     # Dynamic Prompting based on the feature used
     if action_type == "autocomplete":

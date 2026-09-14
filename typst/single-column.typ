@@ -25,7 +25,7 @@
     #block(text(weight: "bold", size: 17pt, eval(data.title, mode: "markup")))
     #v(1em)
     #grid(
-      columns: data.authors.len(),
+      columns: calc.min(data.authors.len(), 3),
       gutter: 2em,
       ..data.authors.map(a => align(center)[
         *#eval(a.name, mode: "markup")* \
@@ -34,6 +34,20 @@
     )
   ]
   v(2em)
+
+  // Abstract
+  if "abstract" in data and data.abstract != "" {
+    heading(level: 1, numbering: none)[Abstract]
+    text(style: "italic")[#eval(data.abstract, mode: "markup")]
+    v(0.5em)
+  }
+
+  // Index Terms
+  if "index-terms" in data {
+    text(weight: "bold", size: 9pt)[Index Terms — ]
+    text(size: 9pt, style: "italic")[#data.index-terms.join(", ")]
+    v(1em)
+  }
 
   // ---------------------------------------------------------
   // THE NEW RECURSIVE ENGINE
