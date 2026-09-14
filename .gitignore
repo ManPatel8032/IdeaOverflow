@@ -9,3 +9,7 @@ frontend/node_modules/
 .next/
 frontend/.next/
 *.tsbuildinfo
+
+# Build / runtime artifacts
+outputs/
+*.pdf
