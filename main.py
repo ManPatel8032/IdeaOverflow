@@ -3,9 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from api import parser
-from api import compiler
-from api import ai_assistant
 from api import extractor
 from api import cleaner
 from api import section_detector
@@ -17,7 +14,6 @@ from api import schema_mapper
 import os
 import json
 import logging
-import TexSoup
 
 try:
     from ai_cleaner import refine_ast as _ai_refine_ast
@@ -134,34 +130,6 @@ async def detect_sections(request: DetectRequest):
         raise HTTPException(status_code=400, detail=result.get("error", "Section detection failed"))
 
     return result
-
-
-@app.post("/parse")
-async def parse_latex(request: LatexRequest):
-    try:
-        ast_data = parser.extract_ast(request.latex_code)
-        return {"status": "success", "ast": ast_data}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Parsing error: {str(e)}")
-
-
-@app.post("/compile")
-async def compile_latex(request: LatexRequest, background_tasks: BackgroundTasks):
-    # Returns path to a temporary PDF. Background task cleans it up after sending.
-    pdf_path, temp_dir = await compiler.generate_pdf(request.latex_code)
-
-    if not pdf_path or not os.path.exists(pdf_path):
-        raise HTTPException(status_code=500, detail="Compilation failed. Check LaTeX syntax.")
-
-    # Schedule cleanup after response is sent
-    background_tasks.add_task(compiler.cleanup_temp_dir, temp_dir)
-    return FileResponse(pdf_path, media_type='application/pdf', filename="document.pdf")
-
-
-@app.post("/chat")
-async def chat_with_gemini(request: LatexRequest, query: str):
-    response = await ai_assistant.ask_gemini(request.latex_code, query)
-    return {"response": response}
 
 
 # ── Citation Handling ──
@@ -425,6 +393,29 @@ async def get_manuscript():
             return json.load(f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load manuscript: {str(e)}")
+
+
+@app.put("/manuscript")
+async def save_manuscript(request: Request):
+    """Save edited manuscript JSON to typst/paper.json and outputs/paper.json."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+    typst_path = os.path.join(BASE_DIR, "typst", "paper.json")
+    outputs_path = os.path.join(OUTPUTS_DIR, "paper.json")
+    try:
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        with open(typst_path, "w", encoding="utf-8") as f:
+            f.write(payload)
+        with open(outputs_path, "w", encoding="utf-8") as f:
+            f.write(payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save manuscript: {str(e)}")
+    return {"status": "saved"}
 
 
 @app.get("/manuscript/schema")

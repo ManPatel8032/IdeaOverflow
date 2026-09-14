@@ -14,7 +14,20 @@ function getSelectedText() {
 }
 
 function insertTextSafely(text) {
-    document.execCommand("insertText", false, text);
+    // Focus usually sits on a hidden textarea or contenteditable element in Overleaf
+    const activeEl = document.activeElement;
+
+    // execCommand is still the most reliable way to inject text into complex editors
+    // because it triggers the editor's internal history/undo stack
+    const success = document.execCommand("insertText", false, text);
+
+    if (!success && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
+        // Absolute fallback if execCommand is blocked
+        const start = activeEl.selectionStart;
+        const end = activeEl.selectionEnd;
+        activeEl.setRangeText(text, start, end, 'end');
+        activeEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
 }
 
 // --- 2. AUTOCOMPLETE ENGINE ---
@@ -23,32 +36,39 @@ function setupAutocomplete() {
     suggestionBox.id = 'gemini-autocomplete-box';
     document.body.appendChild(suggestionBox);
 
-    document.addEventListener('keyup', (e) => {
-        clearTimeout(typingTimer);
-
+    // CRITICAL FIX: Intercept TAB on 'keydown' using the CAPTURE phase (true)
+    // This ensures our extension catches the Tab key *before* Overleaf's editor steals it.
+    document.addEventListener('keydown', (e) => {
         if (e.key === 'Tab' && currentSuggestion !== "") {
             e.preventDefault();
+            e.stopPropagation(); // Stop Overleaf from indenting the text
+
             insertTextSafely(currentSuggestion + " ");
+
+            // Clean up the UI
             currentSuggestion = "";
             suggestionBox.style.display = 'none';
-            return;
+            clearTimeout(typingTimer);
         }
+    }, true);
+
+    // Handle normal typing detection on keyup
+    document.addEventListener('keyup', (e) => {
+        // Ignore Tab here since we fully handled it in keydown
+        if (e.key === 'Tab') return;
+
+        clearTimeout(typingTimer);
 
         suggestionBox.style.display = 'none';
         currentSuggestion = "";
 
+        // Trigger fetch only on text modifications
+>>>>>>> origin/main:plugins/content.js
         if (e.key.length === 1 || e.key === 'Backspace') {
             typingTimer = setTimeout(fetchAutocomplete, DONE_TYPING_INTERVAL);
         }
     });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Tab' && currentSuggestion !== "") {
-            e.preventDefault();
-        }
-    });
 }
-
 function fetchAutocomplete() {
     const selection = window.getSelection();
     if (!selection || !selection.focusNode) return;
@@ -130,7 +150,16 @@ function injectUI() {
         </div>
 
         <div id="g-content-review" class="g-panel">
-            <div class="g-info">Analyze your entire LaTeX document for clarity, structure, and academic quality.</div>
+            <div class="g-info">Analyze your entire LaTeX document for specific conference standards.</div>
+            
+            <select id="review-conference" class="g-select">
+                <option value="ACL">ACL (NLP)</option>
+                <option value="EMNLP">EMNLP (Empirical NLP)</option>
+                <option value="CVPR">CVPR (Computer Vision)</option>
+                <option value="NeurIPS">NeurIPS (Machine Learning)</option>
+                <option value="AAAI">AAAI (General AI)</option>
+            </select>
+
             <button id="review-btn" class="g-btn">📋 Run Document Analysis</button>
             <div id="review-result" class="g-result-box hidden"></div>
         </div>
@@ -219,17 +248,21 @@ function bindEvents() {
     // Review Logic
     document.getElementById('review-btn').onclick = () => {
         const resultBox = document.getElementById('review-result');
+        const selectedConference = document.getElementById('review-conference').value;
+
         resultBox.classList.remove('hidden');
-        resultBox.innerText = "Analyzing document structure and clarity...";
+        resultBox.innerHTML = `<span style="opacity:0.6; font-style:italic;">Analyzing against ${selectedConference} guidelines...</span>`;
 
         chrome.runtime.sendMessage({
             action: "callGemini",
             actionType: "review",
             context: getOverleafText(),
-            query: ""
+            query: selectedConference // Pass the conference name to the backend
         }, (res) => {
             if (res && res.answer) {
-                resultBox.innerHTML = res.answer.replace(/\n/g, '<br/>');
+                // Replaces markdown bold tags (**text**) with HTML strong tags for better visual rendering
+                let formattedAnswer = res.answer.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+                resultBox.innerHTML = formattedAnswer;
             } else {
                 resultBox.innerHTML = 'Error: No response from server.';
             }
