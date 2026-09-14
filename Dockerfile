@@ -1,14 +1,14 @@
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies (including xz-utils for .tar.xz extraction)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    tar \
+    xz-utils \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Typst Linux binary for PDF compilation
-RUN curl -sSL https://github.com/typst/typst/releases/download/v0.11.1/typst-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /tmp \
+RUN curl -fSL https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz | tar -xJ -C /tmp \
     && mv /tmp/typst-*/typst /usr/local/bin/typst \
     && chmod +x /usr/local/bin/typst \
     && rm -rf /tmp/typst-*
